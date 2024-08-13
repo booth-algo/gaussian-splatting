@@ -22,14 +22,7 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
-# Added
 import numpy as np
-import chop
-from chop.nn.quantizers import quantizer_map
-from chop.passes.graph.transforms.quantize import quantize_transform_pass
-import torch
-import chop.passes as passes
-from chop import MaseGraph
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -37,35 +30,11 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
-quant_config = {
-    "by": "type",
-    "default": {
-        "config": {
-            "name": None,
-        }
-    },
-    "linear": {
-        "config": {
-            "name": "integer",
-            # data
-            "width": 8,
-            "frac_width": 4
-        }
-    },
-}
-
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    mg = GaussianModel(dataset.sh_degree)
-    gaussians = MaseGraph(mg)
-    # gaussians = GaussianModel(dataset.sh_degree)
+    gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
-
-    scene.gaussians = quantize_transform_pass(scene.gaussians, quant_config)
-
-    # breakpoint()
-
     gaussians.training_setup(opt)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -81,7 +50,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
-
     for iteration in range(first_iter, opt.iterations + 1):        
         if network_gui.conn == None:
             network_gui.try_connect()
@@ -231,9 +199,11 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
 
         if tb_writer:
+            # tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
+            # tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
             opacity_values = scene.gaussians.get_opacity.detach().cpu().numpy()
             custom_histogram(tb_writer, "scene/opacity_histogram", opacity_values, iteration=iteration)
-
+            
         torch.cuda.empty_cache()
 
 if __name__ == "__main__":

@@ -10,6 +10,8 @@
 #
 
 import torch
+import torch.fx as fx
+from chop import MaseGraph
 import numpy as np
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
 from torch import nn
@@ -21,7 +23,27 @@ from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
 
-class GaussianModel:
+class GaussianModel(torch.nn.Module):
+
+    def forward(self):
+        print("Forward method called. Rotation shape:", self._rotation.shape)
+        
+        # Use torch.cat with a dummy tensor to handle empty tensors
+        features = torch.cat([self._features_dc, self._features_rest, torch.zeros(1, 1, device=self._features_dc.device)], dim=1)
+        features = features[:, :self._features_dc.size(1) + self._features_rest.size(1)]  # Remove the dummy tensor
+
+        return {
+            'xyz': self._xyz,
+            'features': features,
+            'opacity': self.opacity_activation(self._opacity),
+            'scaling': self.scaling_activation(self._scaling),
+            'rotation': self.rotation_activation(self._rotation, dim=-1),
+            'covariance': self.covariance_activation(
+                self.scaling_activation(self._scaling), 
+                1, 
+                self._rotation
+            )
+        }
 
     def setup_functions(self):
         def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
@@ -38,10 +60,12 @@ class GaussianModel:
         self.opacity_activation = torch.sigmoid
         self.inverse_opacity_activation = inverse_sigmoid
 
-        self.rotation_activation = torch.nn.functional.normalize
+        # self.rotation_activation = torch.nn.functional.normalize
+        self.rotation_activation = lambda x, dim: torch.nn.functional.normalize(x, dim=dim)
 
 
     def __init__(self, sh_degree : int):
+        super(GaussianModel, self).__init__() # Init nn.Module (parent class)
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
         self._xyz = torch.empty(0)
@@ -115,13 +139,22 @@ class GaussianModel:
         return self.opacity_activation(self._opacity)
     
     def get_covariance(self, scaling_modifier = 1):
-        return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
-
+        # return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
+        if self._scaling.numel() == 0 or self._rotation.numel() == 0:
+            return torch.empty(0)
+        return self.covariance_activation(self.scaling_activation(self._scaling), scaling_modifier, self._rotation)
+    
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
+    
+    @classmethod
+    def create_from_pcd(cls, pcd: BasicPointCloud, spatial_lr_scale: float):
+        instance = cls(sh_degree=3)  # Adjust sh_degree as needed
+        instance._create_from_pcd(pcd, spatial_lr_scale)
+        return instance
 
-    def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
+    def _create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
         self.spatial_lr_scale = spatial_lr_scale
         fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
         fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())

@@ -17,6 +17,7 @@ from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.gaussian_model import GaussianModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
+from chop import MaseGraph
 
 class Scene:
 
@@ -29,6 +30,7 @@ class Scene:
         self.model_path = args.model_path
         self.loaded_iter = None
         self.gaussians = gaussians
+
 
         if load_iteration:
             if load_iteration == -1:
@@ -80,7 +82,19 @@ class Scene:
                                                            "iteration_" + str(self.loaded_iter),
                                                            "point_cloud.ply"))
         else:
-            self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+            # self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+
+            # Check if gaussians is a MaseGraph or GaussianModel
+            if isinstance(gaussians, MaseGraph):
+                # If it's a MaseGraph, we need to create a new GaussianModel and then wrap it
+                gaussian_model = GaussianModel.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+                self.gaussians = MaseGraph(gaussian_model)
+            elif isinstance(gaussians, GaussianModel):
+                # If it's already a GaussianModel, use it directly
+                self.gaussians = gaussians
+                self.gaussians._create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+            else:
+                raise TypeError("gaussians must be either MaseGraph or GaussianModel")
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
