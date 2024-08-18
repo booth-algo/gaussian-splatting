@@ -13,7 +13,7 @@ import torch
 import torch.fx as fx
 from chop import MaseGraph
 import numpy as np
-from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
+from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation, preprocess_input
 from torch import nn
 import os
 from utils.system_utils import mkdir_p
@@ -26,23 +26,24 @@ from utils.general_utils import strip_symmetric, build_scaling_rotation
 class GaussianModel(torch.nn.Module):
 
     def forward(self):
-        print("Forward method called. Rotation shape:", self._rotation.shape)
-        
-        # Use torch.cat with a dummy tensor to handle empty tensors
-        features = torch.cat([self._features_dc, self._features_rest, torch.zeros(1, 1, device=self._features_dc.device)], dim=1)
-        features = features[:, :self._features_dc.size(1) + self._features_rest.size(1)]  # Remove the dummy tensor
+        # Ensure tensors are at least 2D
+        features_dc = torch.atleast_2d(self._features_dc)
+        features_rest = torch.atleast_2d(self._features_rest)
+        features = torch.cat([features_dc, features_rest], dim=1)
+
+        # Apply activations
+        scaling = self.scaling_activation(self._scaling)
+        rotation = self.rotation_activation(self._rotation)
+        opacity = self.opacity_activation(self._opacity)
+        covariance = self.get_covariance()
 
         return {
             'xyz': self._xyz,
             'features': features,
-            'opacity': self.opacity_activation(self._opacity),
-            'scaling': self.scaling_activation(self._scaling),
-            'rotation': self.rotation_activation(self._rotation, dim=-1),
-            'covariance': self.covariance_activation(
-                self.scaling_activation(self._scaling), 
-                1, 
-                self._rotation
-            )
+            'opacity': opacity,
+            'scaling': scaling,
+            'rotation': rotation,
+            'covariance': covariance
         }
 
     def setup_functions(self):
@@ -60,20 +61,26 @@ class GaussianModel(torch.nn.Module):
         self.opacity_activation = torch.sigmoid
         self.inverse_opacity_activation = inverse_sigmoid
 
-        # self.rotation_activation = torch.nn.functional.normalize
-        self.rotation_activation = lambda x, dim: torch.nn.functional.normalize(x, dim=dim)
+        self.rotation_activation = torch.nn.functional.normalize
 
 
-    def __init__(self, sh_degree : int):
-        super(GaussianModel, self).__init__() # Init nn.Module (parent class)
+    def __init__(self, sh_degree: int):
+        super(GaussianModel, self).__init__()
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
         self._xyz = torch.empty(0)
         self._features_dc = torch.empty(0)
         self._features_rest = torch.empty(0)
-        self._scaling = torch.empty(0)
-        self._rotation = torch.empty(0)
+        
+        # Initialize with non-empty tensors to avoid issues
+        self._scaling = torch.ones(1, 3, dtype=torch.float32)
+        self._rotation = torch.zeros(1, 4, dtype=torch.float32)
+        self._rotation[:, 0] = 1  # Identity quaternion
         self._opacity = torch.empty(0)
+        
+        # Preprocess the scaling tensor early on
+        self._scaling = preprocess_input(self._scaling)
+
         self.max_radii2D = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
         self.denom = torch.empty(0)
@@ -81,6 +88,7 @@ class GaussianModel(torch.nn.Module):
         self.percent_dense = 0
         self.spatial_lr_scale = 0
         self.setup_functions()
+
 
     def capture(self):
         return (
@@ -138,23 +146,18 @@ class GaussianModel(torch.nn.Module):
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
     
-    def get_covariance(self, scaling_modifier = 1):
-        # return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
-        if self._scaling.numel() == 0 or self._rotation.numel() == 0:
-            return torch.empty(0)
-        return self.covariance_activation(self.scaling_activation(self._scaling), scaling_modifier, self._rotation)
-    
+    def get_covariance(self, scaling_modifier=1):
+        # Preprocess the scaling tensor before using it
+        preprocessed_scaling = preprocess_input(self.get_scaling)
+        
+        return self.covariance_activation(preprocessed_scaling, scaling_modifier, self._rotation)
+
+
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
-    
-    @classmethod
-    def create_from_pcd(cls, pcd: BasicPointCloud, spatial_lr_scale: float):
-        instance = cls(sh_degree=3)  # Adjust sh_degree as needed
-        instance._create_from_pcd(pcd, spatial_lr_scale)
-        return instance
 
-    def _create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
+    def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
         self.spatial_lr_scale = spatial_lr_scale
         fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
         fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())

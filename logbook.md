@@ -31,3 +31,7 @@ Notes:
 
 - `xx-nq.py` is the original non-quantised version of the files. For example, `train-nq.py`.
 - Attempting to allow quantize transform pass for `gaussian_model.py`.
+
+### Adding forward pass to Gaussian Model
+
+To quantise `gaussian_model.py` using Mase, the model has to be converted into a MaseGraph. This requires the model to be symbolically traceable, which means it needs a forward pass. 

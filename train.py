@@ -57,19 +57,20 @@ quant_config = {
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
-    mg = GaussianModel(dataset.sh_degree)
-    gaussians = MaseGraph(mg)
-    # gaussians = GaussianModel(dataset.sh_degree)
+    gaussians = GaussianModel(dataset.sh_degree)
+
     scene = Scene(dataset, gaussians)
-
-    scene.gaussians = quantize_transform_pass(scene.gaussians, quant_config)
-
-    # breakpoint()
 
     gaussians.training_setup(opt)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
+
+    scene.gaussians = MaseGraph(scene.gaussians)
+
+    scene.gaussians = quantize_transform_pass(scene.gaussians, quant_config)
+
+    # breakpoint()
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")

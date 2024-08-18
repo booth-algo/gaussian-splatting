@@ -76,38 +76,62 @@ def strip_symmetric(sym):
     return strip_lowerdiag(sym)
 
 def build_rotation(r):
-    norm = torch.sqrt(r[:,0]*r[:,0] + r[:,1]*r[:,1] + r[:,2]*r[:,2] + r[:,3]*r[:,3])
+    # Ensure that r is at least 2D and has the right shape
+    r = torch.atleast_2d(r)
 
-    q = r / norm[:, None]
+    # Handle cases where the tensor might not be normalized or has zeros
+    norm = torch.sqrt(torch.sum(r**2, dim=-1, keepdim=True)).clamp(min=1e-8)
+    q = r / norm
 
-    R = torch.zeros((q.size(0), 3, 3), device='cuda')
+    # Initialize R with zeros and set its shape
+    R = torch.zeros((q.size(0), 3, 3), device=q.device)
 
     r = q[:, 0]
     x = q[:, 1]
     y = q[:, 2]
     z = q[:, 3]
 
-    R[:, 0, 0] = 1 - 2 * (y*y + z*z)
-    R[:, 0, 1] = 2 * (x*y - r*z)
-    R[:, 0, 2] = 2 * (x*z + r*y)
-    R[:, 1, 0] = 2 * (x*y + r*z)
-    R[:, 1, 1] = 1 - 2 * (x*x + z*z)
-    R[:, 1, 2] = 2 * (y*z - r*x)
-    R[:, 2, 0] = 2 * (x*z - r*y)
-    R[:, 2, 1] = 2 * (y*z + r*x)
-    R[:, 2, 2] = 1 - 2 * (x*x + y*y)
+    # Construct the rotation matrix
+    R[:, 0, 0] = 1 - 2 * (y * y + z * z)
+    R[:, 0, 1] = 2 * (x * y - r * z)
+    R[:, 0, 2] = 2 * (x * z + r * y)
+    R[:, 1, 0] = 2 * (x * y + r * z)
+    R[:, 1, 1] = 1 - 2 * (x * x + z * z)
+    R[:, 1, 2] = 2 * (y * z - r * x)
+    R[:, 2, 0] = 2 * (x * z - r * y)
+    R[:, 2, 1] = 2 * (y * z + r * x)
+    R[:, 2, 2] = 1 - 2 * (x * x + y * y)
+    
     return R
 
+
 def build_scaling_rotation(s, r):
-    L = torch.zeros((s.shape[0], 3, 3), dtype=torch.float, device="cuda")
+    # Assuming `s` is already correctly shaped and valid (handled before tracing)
+    
+    # Directly create the scaling matrix
+    L = torch.zeros((s.shape[0], 3, 3), dtype=torch.float32, device=s.device)
+    L[:, 0, 0] = s[:, 0]
+    L[:, 1, 1] = s[:, 1]
+    L[:, 2, 2] = s[:, 2]
+
+    # Assume R is valid and correctly computed
     R = build_rotation(r)
-
-    L[:,0,0] = s[:,0]
-    L[:,1,1] = s[:,1]
-    L[:,2,2] = s[:,2]
-
+    
+    # Matrix multiplication (no control flow)
     L = R @ L
     return L
+
+# Pre-processing outside of tracing context
+def preprocess_input(s):
+    # Ensure `s` is at least 2D (1x3 if it was originally 1D)
+    if s.dim() == 1:
+        s = s.unsqueeze(0)
+    
+    # Ensure the correct shape
+    if s.size(1) != 3:
+        raise ValueError("The scaling tensor `s` must have at least one element and must be of shape [N, 3].")
+    
+    return s
 
 def safe_state(silent):
     old_f = sys.stdout

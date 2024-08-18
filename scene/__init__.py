@@ -20,17 +20,12 @@ from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
 from chop import MaseGraph
 
 class Scene:
+    gaussians: GaussianModel
 
-    gaussians : GaussianModel
-
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
-        """b
-        :param path: Path to colmap scene main folder.
-        """
+    def __init__(self, args: ModelParams, gaussians: GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
         self.model_path = args.model_path
         self.loaded_iter = None
         self.gaussians = gaussians
-
 
         if load_iteration:
             if load_iteration == -1:
@@ -51,7 +46,7 @@ class Scene:
             assert False, "Could not recognize scene type!"
 
         if not self.loaded_iter:
-            with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
+            with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply"), 'wb') as dest_file:
                 dest_file.write(src_file.read())
             json_cams = []
             camlist = []
@@ -69,6 +64,7 @@ class Scene:
             random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
+        print(f"cameras_extent: {self.cameras_extent}")  # Ensure this is not None or invalid
 
         for resolution_scale in resolution_scales:
             print("Loading Training Cameras")
@@ -78,23 +74,11 @@ class Scene:
 
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(self.model_path,
-                                                           "point_cloud",
-                                                           "iteration_" + str(self.loaded_iter),
-                                                           "point_cloud.ply"))
+                                                 "point_cloud",
+                                                 "iteration_" + str(self.loaded_iter),
+                                                 "point_cloud.ply"))
         else:
-            # self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
-
-            # Check if gaussians is a MaseGraph or GaussianModel
-            if isinstance(gaussians, MaseGraph):
-                # If it's a MaseGraph, we need to create a new GaussianModel and then wrap it
-                gaussian_model = GaussianModel.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
-                self.gaussians = MaseGraph(gaussian_model)
-            elif isinstance(gaussians, GaussianModel):
-                # If it's already a GaussianModel, use it directly
-                self.gaussians = gaussians
-                self.gaussians._create_from_pcd(scene_info.point_cloud, self.cameras_extent)
-            else:
-                raise TypeError("gaussians must be either MaseGraph or GaussianModel")
+            self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
