@@ -13,7 +13,7 @@ import torch
 import torch.fx as fx
 from chop import MaseGraph
 import numpy as np
-from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation, preprocess_input
+from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
 from torch import nn
 import os
 from utils.system_utils import mkdir_p
@@ -78,9 +78,6 @@ class GaussianModel(torch.nn.Module):
         self._rotation[:, 0] = 1  # Identity quaternion
         self._opacity = torch.empty(0)
         
-        # Preprocess the scaling tensor early on
-        self._scaling = preprocess_input(self._scaling)
-
         self.max_radii2D = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
         self.denom = torch.empty(0)
@@ -146,11 +143,8 @@ class GaussianModel(torch.nn.Module):
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
     
-    def get_covariance(self, scaling_modifier=1):
-        # Preprocess the scaling tensor before using it
-        preprocessed_scaling = preprocess_input(self.get_scaling)
-        
-        return self.covariance_activation(preprocessed_scaling, scaling_modifier, self._rotation)
+    def get_covariance(self, scaling_modifier=1):        
+        return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
 
 
     def oneupSHdegree(self):

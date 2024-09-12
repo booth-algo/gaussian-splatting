@@ -62,76 +62,68 @@ def get_expon_lr_func(
     return helper
 
 def strip_lowerdiag(L):
-    uncertainty = torch.zeros((L.shape[0], 6), dtype=torch.float, device="cuda")
-
-    uncertainty[:, 0] = L[:, 0, 0]
-    uncertainty[:, 1] = L[:, 0, 1]
-    uncertainty[:, 2] = L[:, 0, 2]
-    uncertainty[:, 3] = L[:, 1, 1]
-    uncertainty[:, 4] = L[:, 1, 2]
-    uncertainty[:, 5] = L[:, 2, 2]
-    return uncertainty
+    return torch.stack([
+        L[:, 0, 0],
+        L[:, 0, 1],
+        L[:, 0, 2],
+        L[:, 1, 1],
+        L[:, 1, 2],
+        L[:, 2, 2]
+    ], dim=1)
 
 def strip_symmetric(sym):
     return strip_lowerdiag(sym)
 
 def build_rotation(r):
-    # Ensure that r is at least 2D and has the right shape
-    r = torch.atleast_2d(r)
-
-    # Handle cases where the tensor might not be normalized or has zeros
-    norm = torch.sqrt(torch.sum(r**2, dim=-1, keepdim=True)).clamp(min=1e-8)
+    norm = torch.sqrt(torch.sum(r * r, dim=1, keepdim=True))
     q = r / norm
 
-    # Initialize R with zeros and set its shape
-    R = torch.zeros((q.size(0), 3, 3), device=q.device)
+    # Unpack quaternion components
+    r, x, y, z = q.unbind(1)
 
-    r = q[:, 0]
-    x = q[:, 1]
-    y = q[:, 2]
-    z = q[:, 3]
+    # Compute common terms
+    xx = x * x
+    yy = y * y
+    zz = z * z
+    xy = x * y
+    xz = x * z
+    yz = y * z
+    rx = r * x
+    ry = r * y
+    rz = r * z
 
-    # Construct the rotation matrix
-    R[:, 0, 0] = 1 - 2 * (y * y + z * z)
-    R[:, 0, 1] = 2 * (x * y - r * z)
-    R[:, 0, 2] = 2 * (x * z + r * y)
-    R[:, 1, 0] = 2 * (x * y + r * z)
-    R[:, 1, 1] = 1 - 2 * (x * x + z * z)
-    R[:, 1, 2] = 2 * (y * z - r * x)
-    R[:, 2, 0] = 2 * (x * z - r * y)
-    R[:, 2, 1] = 2 * (y * z + r * x)
-    R[:, 2, 2] = 1 - 2 * (x * x + y * y)
-    
+    # Construct rotation matrix
+    R_flat = torch.stack([
+        1 - 2 * (yy + zz), 2 * (xy - rz), 2 * (xz + ry),
+        2 * (xy + rz), 1 - 2 * (xx + zz), 2 * (yz - rx),
+        2 * (xz - ry), 2 * (yz + rx), 1 - 2 * (xx + yy)
+    ], dim=1)
+
+    # Reshape to 3x3 matrix
+    R = R_flat.view(-1, 3, 3)
+
     return R
 
 
 def build_scaling_rotation(s, r):
-    # Assuming `s` is already correctly shaped and valid (handled before tracing)
-    
-    # Directly create the scaling matrix
-    L = torch.zeros((s.shape[0], 3, 3), dtype=torch.float32, device=s.device)
-    L[:, 0, 0] = s[:, 0]
-    L[:, 1, 1] = s[:, 1]
-    L[:, 2, 2] = s[:, 2]
+    # print("s = ", s, "    s.shape = ", s.shape, "    s.shape[0] = ", s.shape[0])
+    L = s.new_zeros((s.shape[0], 3, 3), dtype=torch.float, device="cuda")
 
-    # Assume R is valid and correctly computed
     R = build_rotation(r)
+
+    # Create scaling matrix
+    zeros = torch.zeros_like(s[:, 0])
+    scaling_matrix = torch.stack([
+        torch.stack([s[:, 0], zeros, zeros], dim=1),
+        torch.stack([zeros, s[:, 1], zeros], dim=1),
+        torch.stack([zeros, zeros, s[:, 2]], dim=1)
+    ], dim=1)
     
-    # Matrix multiplication (no control flow)
-    L = R @ L
+    # Combine scaling and rotation
+    L = torch.matmul(R, scaling_matrix)
+
     return L
 
-# Pre-processing outside of tracing context
-def preprocess_input(s):
-    # Ensure `s` is at least 2D (1x3 if it was originally 1D)
-    if s.dim() == 1:
-        s = s.unsqueeze(0)
-    
-    # Ensure the correct shape
-    if s.size(1) != 3:
-        raise ValueError("The scaling tensor `s` must have at least one element and must be of shape [N, 3].")
-    
-    return s
 
 def safe_state(silent):
     old_f = sys.stdout
