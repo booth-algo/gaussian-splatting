@@ -40,6 +40,8 @@ class Camera(nn.Module):
         self.image_width = self.original_image.shape[2]
         self.image_height = self.original_image.shape[1]
 
+        # print(self.image_width, self.image_height)
+
         if gt_alpha_mask is not None:
             self.original_image *= gt_alpha_mask.to(self.data_device)
         else:

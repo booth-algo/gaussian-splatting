@@ -28,6 +28,9 @@ def readImages(renders_dir, gt_dir):
     for fname in os.listdir(renders_dir):
         render = Image.open(renders_dir / fname)
         gt = Image.open(gt_dir / fname)
+        if not render.getbbox() or not gt.getbbox():
+            print(f"Empty or corrupted image detected: {fname}")
+            continue  # Skip empty or corrupted images
         renders.append(tf.to_tensor(render).unsqueeze(0)[:, :3, :, :].cuda())
         gts.append(tf.to_tensor(gt).unsqueeze(0)[:, :3, :, :].cuda())
         image_names.append(fname)
@@ -89,8 +92,9 @@ def evaluate(model_paths):
                 json.dump(full_dict[scene_dir], fp, indent=True)
             with open(scene_dir + "/per_view.json", 'w') as fp:
                 json.dump(per_view_dict[scene_dir], fp, indent=True)
-        except:
+        except Exception as e:
             print("Unable to compute metrics for model", scene_dir)
+            print("Error:", e)
 
 if __name__ == "__main__":
     device = torch.device("cuda:0")
