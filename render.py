@@ -42,10 +42,7 @@ def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParam
 
         scene.gaussians = torch.quantization.convert(scene.gaussians.eval(), inplace=False)
 
-        # TODO: You're passing a wrapper object into quantization function, but you should be passing the parameters of the model instead
-        # Print the parameters and check what range of quantization you need
         
-        breakpoint()
         bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
